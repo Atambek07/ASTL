@@ -1,0 +1,13 @@
+# Зависимости «Умного светофора» (MVP v1.0)
+# Установка на Raspberry Pi OS (см. руководство пользователя):
+#   pip install -r requirements.txt
+
+PyYAML>=6.0
+numpy>=1.24
+
+# Для Raspberry Pi (ARM) — лёгкий рантайм TFLite:
+#   tflite-runtime>=2.14
+# Для отладки на ПК (x86/Windows/macOS) вместо tflite-runtime используйте:
+#   tensorflow>=2.14  (комментарий: раскомментируйте нужную строку ниже)
+# tflite-runtime>=2.14        # RPi только
+tensorflow>=2.14              # x86 debug (раскомментируйте при работе на ПК)
