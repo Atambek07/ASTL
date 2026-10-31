@@ -10,17 +10,14 @@ lang: ru-RU
 ## 1. Суть проекта и метрика Person-Throughput
 
 «Умный светофор» — edge-система динамического управления фазами светофорного
-объекта на базе Raspberry Pi 4 Model B. Вместо классического подсчёта автомобилей
-(vehicle throughput) системой вводится метрика **Person-Throughput (PT)** —
-«сколько людей проходит за единицу времени», учитывающая пассажиров автобусов.
-
-**Базовая формула:**
+объекта на базе Raspberry Pi 4 Model B. Система оптимизирует **пропускную
+способность людей**, а не машин — через метрику **Person-Throughput (PT)**.
 
 ```
 PT_фазы = Σ (count_vehicle_class × occupancy_class) + Σ пешеходов
 ```
 
-Коэффициенты вместимости (настраиваются в `config.yaml`, секция `occupancy`):
+Коэффициенты вместимости (настраиваются в `config.yaml`):
 
 | Класс | Коэффициент | Комментарий |
 |---|---|---|
@@ -29,16 +26,15 @@ PT_фазы = Σ (count_vehicle_class × occupancy_class) + Σ пешеходо�
 | truck | 1.1 | водитель + пассажир |
 | motorcycle | 1.0 | водитель |
 | bicycle | 1.0 | велосипедист |
-| pedestrian | 1.0 | пешеход — точный счёт |
-| emergency_vehicle | 0.0 | не считается, только событие (приоритет) |
+| pedestrian | 1.0 | пешеход |
+| emergency_vehicle | 0.0 | спецтранспорт — событие, приоритет |
 
-**Алгоритм:** локальный конечный автомат (FSM) глядит на очереди обеих фаз
-и жадным правилом отдаёт зелёный фазе с максимальным приведённым скоплением
-людей. Экстренный транспорт прерывает цикл немедленно.
+**Алгоритм:** конечный автомат (FSM) сравнивает скопления обеих фаз и жадным
+правилом отдаёт зелёный фазе с максимальным приведённым числом людей.
+Экстренный транспорт (класс `emergency_vehicle`) прерывает цикл немедленно.
 
-Для стендового MVP кадр делится на две половины (зоны фаз A/B) вертикальной
-границей — параметр `phase_split_fraction`. В боевой версии каждая камера
-отображается на свой подход 1:1.
+Для стендового MVP кадр делится двумя зонами фаз A/B вертикальной границей
+(`phase_split_fraction`). В боевой версии каждая камера → свой подход 1:1.
 
 ---
 
@@ -46,165 +42,317 @@ PT_фазы = Σ (count_vehicle_class × occupancy_class) + Σ пешеходо�
 
 ```
 smart-traffic-light/
-├── config.yaml              # настройки системы
+├── README.md                # быстрый старт
+├── config.yaml              # настройки
 ├── detector.py              # CV-модуль (TFLite + OpenCV)
 ├── decision_engine.py       # FSM и метрика PT
-├── gpio_controller.py       # управление реле (pigpio / RPi.GPIO / mock)
+├── gpio_controller.py       # управление реле
 ├── main.py                  # главный цикл
-├── requirements.txt         # зависимости
+├── requirements.txt
 ├── HARDWARE_WIRING.md       # схема подключения
 ├── USER_GUIDE.md            # этот документ
-├── scripts/get_yolov8n_tflite.py  # загрузка/конвертация модели
-├── models/                  # сюда кладём .tflite
-└── logs/                    # файлы логов (создаются автоматически)
+├── scripts/get_yolov8n_tflite.py
+├── models/                  # yolov8n_int8.tflite (уже здесь)
+└── test_video.mp4           # тестовое видео (уже здесь, опционально)
 ```
 
 ---
 
-## 3. Установка зависимостей на Raspberry Pi OS
+## 3. Часть I. Запуск на НОУТБУКЕ (отладка без железа)
 
-### 3.1 Базовая система (Raspberry Pi OS Lite 64-bit рекомендуем)
+> Здесь нет реле и пинов — GPIO автоматически уйдёт в **MOCK-эмуляцию**,
+> но детекция, FSM и отрисовка работают в полном объёме. Это лучший способ
+> проверить алгоритм и модель до установки на Pi.
+
+### Шаг 1. Установите Python 3.9+
+
+- **Windows:** установите с python.org (галка «Add to PATH»).
+- **Linux (Ubuntu/Debian):** `sudo apt install python3 python3-pip python3-venv`
+- **macOS:** `brew install python` или установите с python.org.
+
+### Шаг 2. Откройте терминал и скопируйте проект
+
+```bash
+cd /путь/к/вашей/папке
+git clone <ваш-репозиторий> smart-traffic-light   # или просто скопируйте папку
+cd smart-traffic-light
+```
+
+### Шаг 3. Создайте виртуальное окружение и поставьте зависимости
+
+**Linux/macOS:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+```
+
+Установка пакетов:
+```bash
+pip install --upgrade pip
+pip install PyYAML numpy opencv-python-headless
+pip install tensorflow          # на ПК проще поставить полный TF (Lite внутри)
+# (медленно? см. раздел 5 «Депенденсы по платформам»)
+```
+
+Проверка:
+```bash
+python -c "import cv2, numpy, yaml; print('OK', cv2.__version__)"
+```
+
+### Шаг 4. Проверьте наличие модели
+
+В папке уже должна лежать `models/yolov8n_int8.tflite`. Если нет:
+```bash
+python scripts/get_yolov8n_tflite.py        # скачает готовую модель
+# или:  python scripts/get_yolov8n_tflite.py --weights yolov8n.pt
+```
+> Без модели программа **не падает** — включится синтетический MockDetector
+> и пойдёт демо-режим (помечается в логе как «demo без ИИ»).
+
+### Шаг 5. Проверьте/положите тестовое видео
+
+В папке уже есть `test_video.mp4` (4-секундная запись с автобусом и пешеходами).
+Можете заменить своим роликом с перекрёстка.
+
+Убедитесь, что в `config.yaml`:
+```yaml
+mode: test
+video_path: "./test_video.mp4"
+video_loop: true
+show_video: true
+```
+
+### Шаг 6. Запуск
+
+```bash
+python main.py --config config.yaml
+```
+
+**Что увидите:** окно с детекциями (bounding boxes), панель с метриками
+`PT-A / PT-B`, текущим состоянием FSM (`GREEN_A` → `AMBER_A` → ...) и
+вертикальной линией границы фаз. В консоли — лог событий переключения фаз.
+
+**Выход:** `ESC` в окне или `Ctrl+C` в терминале.
+
+> **Headless (сервер без монитора):** в `config.yaml` поставьте
+> `show_video: false` — метрики увидите в логе: `tail -f logs/app.log`.
+
+---
+
+## 4. Часть II. Запуск на RASPBERRY PI (полный цикл с реле)
+
+### Шаг 0. Подготовка SD-карты и ОС
+
+1. Запишите **Raspberry Pi OS (64-bit) Lite** (без рабочего стола) на SD-карту
+   (официальный Raspberry Pi Imager).
+2. В настройках Imager включите SSH, задайте имя пользователя/пароль, WiFi (если нужно).
+3. Вставьте SD, включите Pi, найдите IP и подключитесь:
+   ```bash
+   ssh pi@<ip-pi>
+   ```
+
+### Шаг 1. Обновление системы и базовые пакеты
 
 ```bash
 sudo apt update
 sudo apt upgrade -y
+sudo apt install -y python3-pip python3-venv git curl
+```
 
-# Базовые утилиты и Python
-sudo apt install -y python3-pip python3-dev python3-venv git curl
+### Шаг 2. Установка опенсорсных библиотек (быстрее через apt, чем pip)
 
-# OpenCV (системный — быстрее, чем pip-сборка на ARM)
+```bash
 sudo apt install -y python3-opencv libatlas-base-dev
+```
 
-# pigpio (демон + обвязка для точного GPIO)
+### Шаг 3. Установка pigpio (демон GPIO) и запуск
+
+```bash
 sudo apt install -y pigpio python3-pigpio
 sudo systemctl enable --now pigpiod
-
-# Экранный пакет (для окна cv2.imshow) — на сервере без монитора можно пропустить
-sudo apt install -y libqt5gui5 2>/dev/null || true
+pigs t            # проверка: должен вывести "1000"
 ```
 
-### 3.2 Python-зависимости (в виртуальном окружении, рекомендовано)
+> Ролик-демонов: если pigpiod не запущен, программа автоматически использует
+> RPi.GPIO (без демона), а при отсутствии железа — MOCK. Но для точности
+> включения реле рекомендуем pigpio.
+
+### Шаг 4. Скопируйте проект на Pi
 
 ```bash
+cd ~
+git clone <ваш-репозиторий> smart-traffic-light
 cd smart-traffic-light
+# либо rsync/scp из ноутбука:
+# scp -r smart-traffic-light pi@<ip>:/home/pi/
+```
+
+### Шаг 5. Виртуальное окружение и зависимости для RPi
+
+```bash
+cd ~/smart-traffic-light
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Основные пакеты
 pip install --upgrade pip
 pip install PyYAML numpy
-
-# OpenCV (если не ставили через apt; для ARM-headless версия)
-pip install opencv-python-headless
-
-# TensorFlow Lite Runtime — варианты:
-#  A) На Raspberry Pi (ARM):
-pip install tflite-runtime
-#  B) На ПК для отладки (x86/Windows/macOS) — полный TensorFlow:
-# pip install tensorflow
-
-pip install -r requirements.txt   # остальное
+pip install opencv-python-headless     # если не поставили через apt
+pip install tflite-runtime             # лёгкий рантайм для ARM
+pip install pigpio
+# (requirements.txt тоже подойдёт, но tflite-runtime предпочтительнее полного TF)
 ```
 
-> **Проверка окружения:**
-> ```bash
-> python3 -c "import cv2, numpy, yaml; print('OK', cv2.__version__)"
-> python3 -c "import tflite_runtime.interpreter as t; print('TFLite OK')"
-> ```
+Проверка:
+```bash
+python -c "import cv2, numpy, yaml; print('OK', cv2.__version__)"
+python -c "import tflite_runtime.interpreter; print('TFLite OK')"
+```
 
-### 3.3 Установка модели ИИ
+### Шаг 6. Проверьте модель и тестовое видео
+
+Как на ноутбуке: `models/yolov8n_int8.tflite` уже в репозитории.
+При отсутствии — `python scripts/get_yolov8n_tflite.py`.
+
+### Шаг 7. Тест на видео без камеры
+
+```bash
+python main.py --config config.yaml
+```
+GPIO перейдёт в **REAL-режим** (pigpio или RPi.GPIO), но без подключённых
+светодиодов ты увидишь только лог «применяю сигнал». Чтобы проверить реальное
+железо, подключите схему (см. `HARDWARE_WIRING.md`) и используйте
+быстрый тест из раздела 5 этого руководства.
+
+### Шаг 8. Переключаем в БОЕВОЙ режим (реальная камера)
+
+Отредактируйте `config.yaml`:
+```yaml
+mode: live
+camera_source: 0        # USB-камера /dev/video0
+show_video: false       # на реальном объекте окно не нужно
+```
+Запуск:
+```bash
+python main.py --config config.yaml
+```
+
+**USB-камера** проще всего. **CSI-камера** (пи-кабель) — см. раздел 6.
+
+### Шаг 9. Автозапуск при загрузке (systemd)
+
+Создайте `/etc/systemd/system/smarttraffic.service`:
+```ini
+[Unit]
+Description=Smart Traffic Light MVP
+After=network-online.target pigpiod.service
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/smart-traffic-light
+ExecStart=/home/pi/smart-traffic-light/.venv/bin/python main.py --config config.yaml --no-window
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now smarttraffic
+# логи:
+journalctl -u smarttraffic -f
+```
+
+---
+
+## 5. Депенденсы по платформам (коротко)
+
+| Платформа | Быстрый вариант | Рекомендуемый |
+|---|---|---|
+| **Windows ноутбук** | `pip install tensorflow opencv-python-headless PyYAML numpy` | Full TF |
+| **Linux/macOS ноут** | то же | Full TF |
+| **Raspberry Pi (ARM)** | `pip install tflite-runtime opencv-python-headless PyYAML numpy pigpio` | tflite-runtime |
+
+`requirements.txt` в пакете написан под **RPi** (tflite-runtime). На ноутбуке
+можете просто закомментировать строку `tflite-runtime` и добавить `tensorflow`.
+
+---
+
+## 6. Камеры: CSI и USB
+
+- **USB:** `camera_source: 0` — самый простой вариант.
+- **CSI (пи-шлейф):** на Raspberry Pi OS (Bookworm) нужен libcamera:
+  ```bash
+  sudo apt install -y libcamera-tools python3-libcamera python3-picamera2
+  ```
+  В `config.yaml`:
+  ```yaml
+  camera_source: "libcamerasrc ! videoconvert ! video/x-raw,width=1280,height=720,framerate=30/1 ! appsink"
+  ```
+
+---
+
+## 7. Модель ИИ: что за вероятность и как свою поставить
+
+Пакет работает с **YOLOv8n в формате TFLite (640×640)**. Модель в репозитории
+`models/yolov8n_int8.tflite` обучена на COCO (80 классов) — детектор
+мапит их в 7 доменных классов (легковой, автобус, грузовик, мото, вело,
+пешеход). Для спецтранспорта (`emergency_vehicle`) со стандартной COCO-моделью
+класс не появляется — его надо дообучить (пункт «обучение» в техдокументации).
+
+В Types: `scripts/get_yolov8n_tflite.py` поддерживает и конвертацию из
+`.pt`-весов ultralytics: `--weights yolov8n.pt --calib-video sample.mp4`.
+
+---
+
+## 8. Быстрый тест реле/светодиодов (отдельно от программы)
 
 ```bash
 cd smart-traffic-light
-python3 scripts/get_yolov8n_tflite.py                # скачивание готовой YOLOv8n int8
-# либо своя: python3 scripts/get_yolov8n_tflite.py --weights yolov8n.pt --calib-video sample.mp4
-ls -la models/                                       # должен появиться файл
+python - <<'PY'
+import yaml, time
+from gpio_controller import RelayController
+cfg = yaml.safe_load(open("config.yaml"))
+g = RelayController(cfg)
+print("Backend:", g.backend)
+for pair in [({"A":"GREEN","B":"RED"}, 2),
+             ({"A":"YELLOW","B":"RED"}, 1),
+             ({"A":"RED","B":"GREEN"}, 2)]:
+    g.apply_outputs(pair[0]); time.sleep(pair[1])
+g.cleanup()
+print("OK — сигналы переключаются")
+PY
 ```
-
-Модель кладём в `models/yolov8n-int8.tflite` (путь настроен в `config.yaml`).
-Если модель отсутствует, программа автоматически запустит **MockDetector**
-(синтетические объекты) — демо заработает без ИИ.
+Ожидаемый результат: зелёный A → жёлтый A → зелёный B.
 
 ---
 
-## 4. Запуск в тестовом режиме (по видеофайлу)
-
-1. Положите `.mp4` с записью перекрёстка рядом с проектом, например: `test_video.mp4`.
-2. В `config.yaml` убедитесь, что:
-   ```yaml
-   mode: test
-   video_path: "./test_video.mp4"
-   video_loop: true          # зацикливание
-   show_video: true
-   ```
-3. Запустите:
-
-   ```bash
-   source .venv/bin/activate
-   python3 main.py --config config.yaml
-   ```
-   (или с другой записью: `python3 main.py --video /path/to/clip.mp4`)
-
-4. Откроется окно с кадрами: bounding boxes, счётчики, метрики **PT-A / PT-B**,
-   текущее состояние FSM. Наблюдайте, как система переключает фазу A/B в
-   зависимости от скопления людей. Выход из программы — `ESC` (в окне) или `Ctrl+C`.
-
-> **Если окно не появляется** (сервер без графики): добавьте в конфиг
-> `show_video: false`, а метрики и события увидите в логе:
-> `tail -f logs/app.log`.
-
----
-
-## 5. Переключение в боевой режим (реальная камера)
-
-### 5.1 USB-камера (проще всего)
-
-```yaml
-mode: live
-camera_source: 0        # 0 — /dev/video0
-show_video: true
-```
-
-```bash
-python3 main.py --config config.yaml
-```
-
-### 5.2 Камера CSI (пи коннектор)
-
-```yaml
-mode: live
-# URL конвейера gstreamer для libcamera (установите libcamera-compat и gst):
-camera_source: "libcamerasrc ! camera name=cam0 ! libcamerasrc ! video/x-raw,width=1280,height=720,framerate=30/1 ! videoconvert ! appsink"
-```
-
-Перед использованием CSI-камеры на Raspberry Pi OS (Bookworm) выполните:
-
-```bash
-sudo apt install -y python3-libcamera python3-picamera2 libcamera-tools
-# иначе камера будет доступна через /dev/video0/1 после загрузки драйвера
-```
-
-### 5.3 Что изменить в конфиге при «бое»-инсталляции
-
-- `occupancy` — настройте коэффициенты по замерам вашего перекрёстка.
-- `phase_split_fraction` — при одной камере на два подхода оставьте 0.5,
-  при двух камерах (по подготовке из архитеktурного документа) — данные фаз
-  приходят раздельно, и граница не нужна.
-- `show_video: false` в продуктовой инсталляции.
-- `timings` и `thresholds` согласуйте со светофорным контроллером/инженером.
-
----
-
-## 6. Отказоустойчивость (краткие гарантии MVP)
+## 9. Отказоустойчивость (что делает система)
 
 | Сбой | Реакция |
 |---|---|
-| Модель не найдена | Авто-fallback на MockDetector (демо продолжает работать) |
-| Видео закончилось | Зацикливание (в тестовом режиме) |
-| Демон pigpiod не запущен | Автопереход на RPi.GPIO, затем на MOCK-эмуляцию |
-| Камера «зависла» | Переоткрытие источника, лог ошибки |
-| Ctrl+C / ESC | Гашение всех сигналов, корректное освобождение ресурсов |
-| Исключение в кадре | Логируется, цикл продолжается (система не «падает») |
+| Модель не найдена | Mock-детектор (демо продолжает) |
+| Видео закончилось | Зацикливание (тест-режим) |
+| pigpiod не запущен | Авто: RPi.GPIO → MOCK |
+| Камера «зависла» | Переоткрытие источника |
+| Ctrl+C / ESC | Гашение сигналов, корректный cleanup |
+| Ошибка в кадре | Логирование, цикл продолжается |
 
-> **Безопасность BOM**: критичные изменения таймингов применяются только в
-> конфиг-файле и только инженером с доступом к устройству.
+---
+
+## 10. Устранение неполадок (FAQ)
+
+| Симптом | Причина/решение |
+|---|---|
+| «Модуль не найден: cv2» | postavte opencv: `pip install opencv-python-headless` |
+| «No module named yaml» | `pip install PyYAML` |
+| Модель грузится медленно | На RPi используйте `tflite-runtime`, не полный TF |
+| Нет окна на сервере | `show_video: false` |
+| Светодиоды не загораются | Проверьте `relay_active_low`, питание модуля 5V, джемпер JD-VCC |
+| pip не находит tflite-runtime на ПК | На ПК поставьте `tensorflow` |

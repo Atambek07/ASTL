@@ -1,13 +1,16 @@
 # Зависимости «Умного светофора» (MVP v1.0)
-# Установка на Raspberry Pi OS (см. руководство пользователя):
-#   pip install -r requirements.txt
+# Этот файл — для RASPBERRY PI (ARM).
+# Для ноутбука используйте requirements-laptop.txt (см. ниже).
 
 PyYAML>=6.0
 numpy>=1.24
 
-# Для Raspberry Pi (ARM) — лёгкий рантайм TFLite:
-#   tflite-runtime>=2.14
-# Для отладки на ПК (x86/Windows/macOS) вместо tflite-runtime используйте:
-#   tensorflow>=2.14  (комментарий: раскомментируйте нужную строку ниже)
-# tflite-runtime>=2.14        # RPi только
-tensorflow>=2.14              # x86 debug (раскомментируйте при работе на ПК)
+# На Raspberry Pi — лёгкий рантайм TFLite (ARM):
+tflite-runtime>=2.14
+
+# OpenCV: если не ставили через apt — поставьте headless-версию:
+# opencv-python-headless>=4.8
+
+# Веб-интерфейс (Flask) — для просмотра/управления в браузере:
+Flask>=3.0
+flask-cors>=5.0

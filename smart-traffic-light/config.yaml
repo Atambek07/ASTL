@@ -17,7 +17,7 @@ video_loop: true                   # зацикливать видео при о
 target_fps: 15                     # целевой темп обработки (0 = без троттлинга)
 
 # ---------- Модель ИИ ----------
-model_path: "./models/yolov8n-int8.tflite"  # TFLite int8 (640x640)
+model_path: "./models/yolov8n_int8.tflite"  # TFLite (640x640): yolov8n_int8.tflite
 model_input_size: 640              # размер входа модели (квадрат)
 conf_threshold: 0.35
 iou_threshold: 0.45
@@ -29,6 +29,9 @@ show_video: true                   # показывать окно с кадра
 window_scale: 1.0                  # масштаб окна (0.7 для слабых экранов)
 phase_split_fraction: 0.5          # вертикальная граница между фазами A/B
                                    # (0.5 = левая/правая половины кадра)
+camera_rotation_angle: 0.0         # поворот кадра (град.) для компенсации
+                                   # наклонной камеры (можно менять в веб-интерфейсе)
+show_boxes: true                   # показывать рамки детекций на видео
 
 # ---------- Коэффициенты вместимости (человек на 1 ТС) ----------
 occupancy:

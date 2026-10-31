@@ -1,0 +1,36 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Виртуальное окружение (огромное) ---
+.venv/
+venv/
+env/
+
+# --- Логи ---
+logs/
+*.log
+
+# --- Крупные бинарники (не в git; добавить при необходимости через LFS) ---
+test_video.mp4
+*.mp4
+*.avi
+*.mkv
+yolov8n.pt
+*.pt
+
+# Модели TFLite (решение: версия int8 ~3.4М можно коммитить; снимите
+# комментарий, если хотите исключить и их):
+# models/*.tflite
+
+# --- IDE (PyCharm/VS Code) ---
+.idea/
+.vscode/
+
+# --- ОС ---
+.DS_Store
+Thumbs.db

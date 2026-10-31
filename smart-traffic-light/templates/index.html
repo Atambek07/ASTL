@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Умный светофор — интерфейс управления</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #25344b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+    --accent: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .container { max-width: 1500px; margin: 0 auto; padding: 16px; }
+
+  /* ---------------- header ---------------- */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; padding: 12px 16px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; margin-bottom: 16px;
+  }
+  .logo { font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+  .logo .dot { color: var(--green); }
+  .header-stats { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .badge {
+    padding: 6px 12px; border-radius: 8px; font-size: 13px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .badge .lamp-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  /* ---------------- layout ---------------- */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 15px; font-weight: 600; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px; color: var(--text);
+  }
+  .panel h2 .icon { font-size: 17px; }
+
+  /* ---------------- video ---------------- */
+  .video-wrap {
+    background: #000; border-radius: 10px; overflow: hidden;
+    position: relative; min-height: 220px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .video-wrap video, .video-wrap img {
+    width: 100%; display: block; max-height: 60vh; object-fit: contain;
+  }
+  .video-overlay {
+    position: absolute; top: 10px; left: 10px; right: 10px;
+    display: flex; justify-content: space-between; pointer-events: none;
+    font-size: 13px; gap: 8px;
+  }
+  .chip {
+    background: rgba(15,23,42,.75); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 8px; font-weight: 500;
+  }
+  .ph-label { font-weight: 700; }
+  .ph-a { color: #60a5fa; } .ph-b { color: #f472b6; }
+
+  /* ---------------- traffic scheme ---------------- */
+  .intersection {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 8px; background: #0b1220; border-radius: 10px;
+    position: relative;
+  }
+  .signal {
+    display: flex; gap: 8px; background: #1a2333;
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
+    align-items: center; flex-direction: column; min-width: 120px;
+  }
+  .signal-row { display: flex; align-items: center; gap: 14px; width: 100%; justify-content: center; }
+  .phase-tag {
+    position: absolute; font-size: 26px; font-weight: 800; opacity: .9;
+  }
+  .phase-left { left: 8px; top: 50%; transform: translateY(-50%); color: #60a5fa; }
+  .phase-right { right: 8px; top: 50%; transform: translateY(-50%); color: #f472b6; }
+  .lamps { display: flex; gap: 6px; }
+  .lamp {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #0b1220; border: 2px solid var(--border);
+    transition: background .2s, box-shadow .2s;
+  }
+  .lamp.on.red    { background: var(--red);    box-shadow: 0 0 18px var(--red);    border-color: var(--red); }
+  .lamp.on.yellow { background: var(--yellow); box-shadow: 0 0 18px var(--yellow); border-color: var(--yellow); }
+  .lamp.on.green  { background: var(--green);  box-shadow: 0 0 18px var(--green);  border-color: var(--green); }
+
+  .road { width: 78%; height: 46px; background: #26334d; position: relative; border-radius: 8px; }
+  .road .center-line { position: absolute; top: 50%; left: 0; right: 0; height: 2px;
+    background: repeating-linear-gradient(90deg, var(--yellow) 0 14px, transparent 14px 26px); }
+  .road-label {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    font-size: 11px; color: var(--muted);
+  }
+  .road-label.a { left: 8px; } .road-label.b { right: 8px; }
+
+  .phase-stats { display: flex; gap: 10px; width: 100%; justify-content: center; flex-wrap: wrap; }
+  .phase-card {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px; min-width: 140px; text-align: center;
+  }
+  .phase-card .count { font-size: 24px; font-weight: 700; }
+  .phase-card .label { font-size: 12px; color: var(--muted); }
+  .phase-card.active { border-color: var(--accent); box-shadow: 0 0 12px rgba(59,130,246,.35); }
+
+  .fsm-banner {
+    margin-top: 10px; padding: 10px; border-radius: 8px; text-align: center;
+    font-weight: 700; font-size: 16px; letter-spacing: .5px;
+  }
+
+  /* ---------------- controls ---------------- */
+  .control { margin-bottom: 14px; }
+  .control label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .control label b { color: var(--text); }
+  input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+  input[type=text] {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); font-size: 14px;
+  }
+  .btn {
+    padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: filter .15s;
+  }
+  .btn:hover { filter: brightness(1.15); }
+  .btn.gray { background: var(--panel-2); color: var(--text); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------------- event log ---------------- */
+  .log-box {
+    background: #0b1220; border-radius: 8px; padding: 10px;
+    height: 150px; overflow-y: auto; font-size: 12px; font-family: Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  .log-box .line-INFO { color: #94a3b8; }
+  .log-box .line-WARNING { color: #eab308; }
+  .log-box .line-ERROR { color: #ef4444; }
+  .log-box .line-EVENT { color: #60a5fa; font-weight: 600; }
+
+  .status-ok { color: var(--green); } .status-bad { color: var(--red); }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- header -->
+  <header>
+    <div class="logo"><span class="dot">●</span> Умный светофор</div>
+    <div class="header-stats">
+      <span class="badge">Режим: <span id="h-mode">…</span></span>
+      <span class="badge">Состояние: <span id="h-state" style="font-weight:700">…</span></span>
+      <span class="badge">Фаза: <span id="h-phase">…</span></span>
+      <span class="badge">FPS: <span id="h-fps">…</span></span>
+      <span class="badge"><span id="h-src-dot" class="lamp-dot" style="background:#94a3b8"></span> <span id="h-src">Проверка…</span></span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- ================= left: video ================= -->
+    <div>
+      <div class="panel">
+        <h2><span class="icon">📹</span> Видео с камеры</h2>
+        <div class="video-wrap">
+          <img id="video" src="/video_feed" alt="Поток видео">
+          <div class="video-overlay">
+            <span class="chip"><span class="ph-label ph-a">ФАЗА A</span> · <span id="ov-a">0 чел</span></span>
+            <span class="chip"><span class="ph-label ph-b">ФАЗА B</span> · <span id="ov-b">0 чел</span></span>
+          </div>
+        </div>
+        <div class="hint" id="stream-hint">Видео с локальной камеры / файла.</div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="icon">🛠</span> Настройка кадра и камеры</h2>
+
+        <div class="control">
+          <label>Граница фаз A/B <b id="split-val">50%</b></label>
+          <input type="range" id="split" min="5" max="95" value="50">
+          <div class="hint">Сдвиг вертикальной границы между фазами. Полезно, если камера установлена не по центру.</div>
+        </div>
+
+        <div class="control">
+          <label>Компенсация наклона камеры <b id="rot-val">0°</b></label>
+          <input type="range" id="rotation" min="-30" max="30" value="0" step="0.5">
+          <div class="hint">Поверните кадр, чтобы «выровнять» криво установленную камеру (красный сигнал станет виден корректно).</div>
+        </div>
+
+        <div class="control">
+          <label for="show_boxes" style="cursor:pointer;color:var(--text);font-size:14px;margin:0">
+            <input type="checkbox" id="show_boxes" checked style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
+            Рамки и подписи детекций
+          </label>
+          <div class="hint">Показывать/скрывать boxes объектов на видео.</div>
+        </div>
+
+        <div class="control" id="stream-control">
+          <label>Видео из интернета (live-стрим)</label>
+          <div class="row">
+            <input type="text" id="stream-url" placeholder="https://… или rtsp://… или mjpeg://…">
+            <button class="btn" id="stream-btn">Смотреть</button>
+            <button class="btn gray" id="stream-stop">Локальная камера</button>
+          </div>
+          <div class="hint">Вставьте ссылку на онлайн-камеру (HLS/MJPEG/RTSP) — стрим появится в окне выше.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= right: intersection + status ================= -->
+    <div>
+      <div class="panel">
+        <h2><span class="icon">🚦</span> Схема перекрёстка (адаптивно)</h2>
+        <div class="intersection">
+          <span class="phase-tag phase-left">A</span>
+          <span class="phase-tag phase-right">B</span>
+
+          <!-- Фаза A -->
+          <div class="signal">
+            <div class="signal-row"><b>Фаза A</b>
+              <div class="lamps">
+                <div class="lamp red" data-phase="A" data-color="RED"></div>
+                <div class="lamp yellow" data-phase="A" data-color="YELLOW"></div>
+                <div class="lamp green" data-phase="A" data-color="GREEN"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="road"><div class="center-line"></div>
+            <span class="road-label a">A</span>
+            <span class="road-label b">B</span>
+          </div>
+
+          <!-- Фаза B -->
+          <div class="signal">
+            <div class="signal-row"><b>Фаза B</b>
+              <div class="lamps">
+                <div class="lamp red" data-phase="B" data-color="RED"></div>
+                <div class="lamp yellow" data-phase="B" data-color="YELLOW"></div>
+                <div class="lamp green" data-phase="B" data-color="GREEN"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fsm-banner" id="fsm-banner">Ожидание данных…</div>
+
+        <div class="phase-stats">
+          <div class="phase-card" id="card-a">
+            <div class="count" id="cnt-a">0</div>
+            <div class="label">Фаза A · спрос <span id="demand-a">0.0</span> чел</div>
+            <div class="label">очередь <span id="queue-a">0</span> ТС/пеш.</div>
+          </div>
+          <div class="phase-card" id="card-b">
+            <div class="count" id="cnt-b">0</div>
+            <div class="label">Фаза B · спрос <span id="demand-b">0.0</span> чел</div>
+            <div class="label">очередь <span id="queue-b">0</span> ТС/пеш.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="icon">📋</span> Журнал событий</h2>
+        <div class="log-box" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>«Умный светофор» — MVP · веб-интерфейс · данные обновляются автоматически</footer>
+</div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+
+  // ---------------- settings save/load ----------------
+  let setTimer = null;
+  function saveSetting(key){
+    if(setTimer) clearTimeout(setTimer);
+    setTimer = setTimeout(() => {
+      const el = $('#'+key);
+      const body = {};
+      if(key==='split_fraction') body[key] = parseInt(el.value)/100;
+      else if(key==='rotation') body[key] = parseFloat(el.value);
+      else if(el.type==='checkbox') body[key] = !!el.checked;
+      else body[key] = el.value;
+      fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    }, 150);
+  }
+  document.getElementById('split').addEventListener('input', e => {
+    $('#split-val').textContent = e.target.value + '%'; saveSetting('split_fraction');
+  });
+  document.getElementById('rotation').addEventListener('input', e => {
+    $('#rot-val').textContent = (+e.target.value).toFixed(1) + '°'; saveSetting('rotation');
+  });
+  document.getElementById('show_boxes').addEventListener('change', () => saveSetting('show_boxes'));
+
+  // ---------------- internet stream ----------------
+  document.getElementById('stream-btn').addEventListener('click', () => {
+    const url = $('#stream-url').value.trim();
+    if(!url){ alert('Вставьте ссылку на онлайн-видео'); return; }
+    // Image stream не умеет rtsp в браузере; для MJPEG/HTTP показываем в <img>
+    $('#video').src = '/video_feed'; // пока оставляем канал сервера (обработка на сервере)
+    fetch('/api/stream', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url}) })
+      .then(r=>r.json()).then(d=>{
+        $('#stream-hint').textContent = 'Источник: ' + url + (d.ok ? '' : ' (не удалось — смотрю локально)');
+      });
+  });
+  document.getElementById('stream-stop').addEventListener('click', () => {
+    fetch('/api/stream', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url:''}) })
+      .then(r=>r.json()).then(()=>{ $('#stream-hint').textContent = 'Видео с локальной камеры / файла.'; });
+  });
+
+  // ---------------- periodic state refresh ----------------
+  function refresh(){
+    fetch('/api/state').then(r=>r.json()).then(d => {
+      if(!d.connected) return;
+      // header
+      $('#h-mode').textContent = d.mode || '—';
+      $('#h-state').textContent = d.state || '—';
+      $('#h-phase').textContent = d.phase || '—';
+      $('#h-fps').textContent = d.fps ?? '—';
+      const srcDot = $('#h-src-dot');
+      if(d.source_ok){ srcDot.style.background = 'var(--green)'; $('#h-src').textContent = 'онлайн'; }
+      else { srcDot.style.background = 'var(--red)'; $('#h-src').textContent = 'нет сигнала'; }
+
+      // overlays on video
+      $('#ov-a').textContent = (d.demand_a ?? 0) + ' чел · ' + (d.queue_a ?? 0) + ' ТС';
+      $('#ov-b').textContent = (d.demand_b ?? 0) + ' чел · ' + (d.queue_b ?? 0) + ' ТС';
+
+      // traffic lights
+      const out = d.outputs || {};
+      ['A','B'].forEach(ph => {
+        ['RED','YELLOW','GREEN'].forEach(c => {
+          const el = $(`.lamp[data-phase="${ph}"][data-color="${c}"]`);
+          const on = out[ph] === c;
+          el.classList.toggle(on ? c.toLowerCase() : '', on);
+          el.classList.toggle('on', on);
+        });
+      });
+
+      // banner
+      const banner = $('#fsm-banner');
+      const st = (d.state || '').split('_');
+      banner.textContent = 'Фаза ' + d.phase + ' — ' + st.join(' · ');
+      if((d.state||'').includes('GREEN')) { banner.style.background = 'rgba(34,197,94,.18)'; banner.style.color='var(--green)'; }
+      else if((d.state||'').includes('AMBER')) { banner.style.background='rgba(234,179,8,.18)'; banner.style.color='var(--yellow)'; }
+      else { banner.style.background='rgba(239,68,68,.18)'; banner.style.color='var(--red)'; }
+
+      // stats
+      $('#cnt-a').textContent = d.detections ?? 0;
+      $('#demand-a').textContent = d.demand_a ?? 0;
+      $('#queue-a').textContent = d.queue_a ?? 0;
+      $('#demand-b').textContent = d.demand_b ?? 0;
+      $('#queue-b').textContent = d.queue_b ?? 0;
+      $('#card-a').classList.toggle('active', d.phase === 'A');
+      $('#card-b').classList.toggle('active', d.phase === 'B');
+
+      // один раз при первой загрузке отражаем реальные настройки с сервера
+      if(!window._settingsSynced && d.settings){
+        window._settingsSynced = true;
+        const s = d.settings;
+        if(typeof s.split_fraction === 'number'){ const el=$('#split'); el.value = Math.round(s.split_fraction*100);
+          $('#split-val').textContent = el.value + '%'; }
+        if(typeof s.rotation === 'number'){ const el=$('#rotation'); el.value = s.rotation;
+          $('#rot-val').textContent = (+s.rotation).toFixed(1) + '°'; }
+        if(typeof s.show_boxes === 'boolean'){ $('#show_boxes').checked = s.show_boxes; }
+      }
+    }).catch(()=>{});
+  }
+  setInterval(refresh, 500);
+  refresh();
+  loadLog();
+
+  // ---------------- event log ----------------
+  function loadLog(){
+    fetch('/api/log').then(r=>r.json()).then(d => {
+      const box = $('#log');
+      if(d.log && d.log.length){
+        box.innerHTML = d.log.slice(-50).map(l => {
+          const cls = l.includes('EVENT') || l.includes('Переход') || l.includes('Смена')
+            ? 'line-EVENT' : (l.includes('WARNING') ? 'line-WARNING' : (l.includes('ERROR') ? 'line-ERROR' : 'line-INFO'));
+          return `<div class="${cls}">${l}</div>`;
+        }).join('');
+        box.scrollTop = box.scrollHeight;
+      }
+    }).catch(()=>{});
+  }
+  setInterval(loadLog, 2000);
+})();
+</script>
+</body>
+</html>

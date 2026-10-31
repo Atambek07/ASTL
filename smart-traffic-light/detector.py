@@ -68,12 +68,12 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), stride=32):
         new_shape = (new_shape, new_shape)
 
     ratio = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
-    ratio = min(ratio, 1.0)  # без увеличения
+    # Примечание: не ограничиваем 1.0 — модели нужен ТОЧНЫЙ размер входа
+    # (например 640x640), поэтому маленькие кадры тоже растягиваются.
 
     new_unpad = (int(round(shape[1] * ratio)), int(round(shape[0] * ratio)))
     dw = (new_shape[1] - new_unpad[0])
     dh = (new_shape[0] - new_unpad[1])
-    dw, dh = dw % stride, dh % stride  # кратность stride
 
     if shape[::-1] != new_unpad:
         img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
@@ -195,12 +195,19 @@ class TFLiteDetector:
         self.interpreter = None
         self.input_details = None
         self.output_details = None
+        self._nchw = False          # True, если вход модели вида [1,3,H,W]
+        self._input_as_float = False  # True, если вход float32 (нужна /255)
         self._load_model()
-        logger.info("TFLite-детектор готов (вход %dx%d)", self.size, self.size)
+        logger.info(
+            "TFLite-дететкор готов (вход %dx%d, layout=%s, dtype=%s)",
+            self.size, self.size,
+            "NCHW" if self._nchw else "NHWC",
+            self.input_details[0]["dtype"],
+        )
 
     def _load_model(self):
         """Загрузка интерпретатора TFLite и тензоров модели."""
-        path = os.path.abspath(self.config.get("model_path", "./models/yolov8n-int8.tflite"))
+        path = os.path.abspath(self.config.get("model_path", "./models/yolov8n_int8.tflite"))
         if not os.path.exists(path):
             raise FileNotFoundError(f"Файл модели не найден: {path}")
 
@@ -229,6 +236,26 @@ class TFLiteDetector:
         if not self.input_details or not self.output_details:
             raise RuntimeError("Модель не содержит входов/выходов (невалидный .tflite)")
 
+        # --- определение формата входа: [1,3,H,W] (NCHW) или [1,H,W,3] (NHWC)
+        in_shape = tuple(self.input_details[0]["shape"])
+        logger.info("Размер входа модели: %s (dtype=%s)", in_shape,
+                    self.input_details[0]["dtype"])
+        self._nchw = False
+        self._input_as_float = False
+        if len(in_shape) == 4:
+            self._nchw = in_shape[1] == 3
+            self.size = int(in_shape[-1])  # квадратный вход
+        self._input_as_float = self.input_details[0]["dtype"] == np.float32
+
+    def _prepare_tensor(self, img):
+        """Letterbox-кадр -> тензор с нужным порядком каналов и нормализацией."""
+        data = np.transpose(img, (2, 0, 1)) if self._nchw else img
+        if self._input_as_float:
+            data = data.astype(np.float32) / 255.0
+        else:
+            data = data.astype(np.uint8)
+        return data[None, ...]  # [1,3,H,W] или [1,H,W,3]
+
     def infer(self, frame):
         """Инференс по кадру -> DetectionBatch в координатах исходного кадра."""
         t0 = time.monotonic()
@@ -237,12 +264,8 @@ class TFLiteDetector:
         # 1) препроцессинг: letterbox до (size, size)
         img, ratio, (pad_l, pad_t) = letterbox(frame, (self.size, self.size))
 
-        # 2) подготовка тензора под тип модели (uint8 -> int8-квантованные модели)
-        inp_dtype = self.input_details[0]["dtype"]
-        if inp_dtype == np.float32:
-            input_data = (img.astype(np.float32) / 255.0)[None, ...]
-        else:
-            input_data = img[None, ...].astype(np.uint8)
+        # 2) подготовка тензора: нормализация и порядок каналов (NHWC/NCHW)
+        input_data = self._prepare_tensor(img)
 
         # 3) инференс
         self.interpreter.set_tensor(self.input_details[0]["index"], input_data)
@@ -379,9 +402,52 @@ class VideoSource:
             self.cap.release()
 
 
+class URLVideoSource:
+    """Источник кадров из интернета (live-стрим): HTTP(S)-MJPEG, RTSP, HLS.
+
+    Использует возможности OpenCV с бэкендом FFmpeg/GStreamer.
+    Режим без зацикливания: если стрим оборвался — открывает повторно.
+    """
+
+    def __init__(self, url: str, target_fps: float = 0.0):
+        self.url = url
+        self.target_fps = float(target_fps or 0)
+        self._n = 0
+        self._t0 = time.monotonic()
+        self.cap = cv2.VideoCapture(url)
+        if not self.cap.isOpened():
+            raise RuntimeError(f"Не удалось открыть поток: {url}")
+
+    def read(self):
+        if not self.cap.isOpened():
+            # попытка восстановления оборвавшегося стрима
+            time.sleep(1.0)
+            self.cap.open(self.url)
+            if not self.cap.isOpened():
+                return False, None
+        ok, frame = self.cap.read()
+        if not ok:
+            return False, None
+        self._n += 1
+        if self.target_fps > 0:
+            expected = self._n / self.target_fps
+            dt = expected - (time.monotonic() - self._t0)
+            if dt > 0:
+                time.sleep(dt)
+        return True, frame
+
+    def release(self):
+        if self.cap is not None:
+            self.cap.release()
+
+
 def draw_frame(frame, batch, count_a, count_b, demand_a, demand_b, state,
-               split_fraction=0.5, phase=None):
-    """Отрисовка bounding boxes, счётчиков и служебной панели на кадре."""
+               split_fraction=0.5, phase=None, show_boxes=True):
+    """Отрисовка bounding boxes, счётчиков и служебной панели на кадре.
+
+    show_boxes=False — рамки детекций и подписи не рисуются (остаётся панель
+    метрик и граница фаз).
+    """
     canvas = frame.copy()
     h, w = canvas.shape[:2]
 
@@ -394,15 +460,16 @@ def draw_frame(frame, batch, count_a, count_b, demand_a, demand_b, state,
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1, cv2.LINE_AA)
 
     # bounding boxes
-    for box, score, cls in zip(batch.boxes, batch.scores, batch.class_ids):
-        x1, y1, x2, y2 = (int(v) for v in box)
-        color = CLASS_COLORS.get(cls, (255, 255, 255))
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
-        label = f"{cls} {score:.2f}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(canvas, (x1, max(y1 - th - 6, 0)), (x1 + tw, y1), color, -1)
-        cv2.putText(canvas, label, (x1, max(y1 - 4, th)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+    if show_boxes:
+        for box, score, cls in zip(batch.boxes, batch.scores, batch.class_ids):
+            x1, y1, x2, y2 = (int(v) for v in box)
+            color = CLASS_COLORS.get(cls, (255, 255, 255))
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            label = f"{cls} {score:.2f}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(canvas, (x1, max(y1 - th - 6, 0)), (x1 + tw, y1), color, -1)
+            cv2.putText(canvas, label, (x1, max(y1 - 4, th)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
     # информационная панель
     panel_lines = [

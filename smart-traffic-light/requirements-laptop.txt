@@ -1,0 +1,18 @@
+# Зависимости «Умного светофора» для НОУТБУКА (отладка без Raspberry Pi)
+# Установка:  pip install -r requirements-laptop.txt
+# Примечание: на ноутбуке GPIO перейдёт в MOCK-эмуляцию (без железа).
+
+PyYAML>=6.0
+numpy>=1.24
+
+# OpenCV без GUI-окон (для сервера). Если нужен cv2.imshow под Windows —
+# используйте opencv-python (без "-headless"):
+opencv-python-headless>=4.8
+# Windows:  pip install opencv-python
+
+# Полный TensorFlow — даёт TFLite-интерпретатор на x86/ПК:
+tensorflow>=2.14
+
+# Веб-интерфейс (Flask) — для просмотра/управления в браузере:
+Flask>=3.0
+flask-cors>=5.0
